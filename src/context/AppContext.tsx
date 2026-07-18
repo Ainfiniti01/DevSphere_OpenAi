@@ -1,0 +1,813 @@
+"use client";
+
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
+import { notificationService } from '@/utils/NotificationService';
+
+interface AppContextType {
+  currentUser: any;
+  setCurrentUser: (user: any) => void;
+  authLoading: boolean;
+  hasSeenOnboarding: boolean;
+  completeOnboarding: () => void;
+  projects: any[];
+  setProjects: React.Dispatch<React.SetStateAction<any[]>>;
+  requests: any[];
+  setRequests: React.Dispatch<React.SetStateAction<any[]>>;
+  chats: any[];
+  setChats: React.Dispatch<React.SetStateAction<any[]>>;
+  notifications: any[];
+  setNotifications: React.Dispatch<React.SetStateAction<any[]>>;
+  unreadChatsCount: number;
+  unreadNotificationsCount: number;
+  logout: () => void;
+  toggleLike: (projectId: string) => Promise<void>;
+  addComment: (projectId: string, text: string) => Promise<void>;
+  refreshProjects: (userOverride?: any) => Promise<void>;
+  refreshNotifications: () => Promise<void>;
+  refreshChats: () => Promise<void>;
+  markAsRead: (chatId: string, isGroup: boolean) => Promise<void>;
+  deleteChat: (chatId: string) => Promise<void>;
+  leaveGroup: (chatId: string) => Promise<void>;
+  dismissGroup: (chatId: string) => Promise<void>;
+  removeMemberFromGroup: (chatId: string, userId: string) => Promise<void>;
+  updatePresence: () => Promise<void>;
+  resolveName: (user: any) => string;
+  incrementInterest: (skills: string[], amount: number) => Promise<void>;
+}
+
+const AppContext = createContext<AppContextType | undefined>(undefined);
+
+export const AppProvider = ({ children }: { children: React.ReactNode }) => {
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [hasSeenOnboarding, setHasSeenOnboarding] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('devsphere_onboarding_complete') === 'true';
+    }
+    return false;
+  });
+
+  const [projects, setProjects] = useState<any[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
+  const [chats, setChats] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadChatsCount, setUnreadChatsCount] = useState(0);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+  
+  const processingLikes = useRef<Set<string>>(new Set());
+  const isRefreshing = useRef({ projects: false, notifications: false, chats: false });
+  const refreshTimeout = useRef<any>(null);
+  const lastActivity = useRef<number>(Date.now());
+  const processedEventIds = useRef<Set<string>>(new Set());
+  const lastLoadedUserId = useRef<string | null>(null);
+
+  // Keep a stable ref to currentUser to prevent callback recreation loops
+  const currentUserRef = useRef<any>(null);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
+  const completeOnboarding = useCallback(() => {
+    setHasSeenOnboarding(true);
+    localStorage.setItem('devsphere_onboarding_complete', 'true');
+  }, []);
+
+  const resolveName = useCallback((user: any) => {
+    if (!user) return "User";
+    return user.display_name || user.name || user.full_name || (user.email ? user.email.split('@')[0] : `User_${user.id?.slice(0, 4)}`);
+  }, []);
+
+  const ensureProfile = useCallback(async (userId: string, authUser: any) => {
+    if (!supabase) return null;
+    
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Timeout fetching profile")), 10000)
+    );
+
+    try {
+      console.log("[AppContext] ensureProfile: Fetching existing profile for", userId);
+      const fetchPromise = (async () => {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .limit(1);
+        
+        if (error) throw error;
+        return data && data.length > 0 ? data[0] : null;
+      })();
+
+      const existing = await Promise.race([fetchPromise, timeoutPromise]) as any;
+      
+      if (existing) {
+        console.log("[AppContext] ensureProfile: Found existing profile");
+        return existing;
+      }
+
+      console.log("[AppContext] ensureProfile: Profile not found, creating new profile");
+      const newProfile = {
+        id: userId,
+        name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'New Developer',
+        avatar_url: authUser.user_metadata?.avatar_url || null,
+        updated_at: new Date().toISOString()
+      };
+      
+      const upsertPromise = (async () => {
+        const { data, error: upsertError } = await supabase
+          .from('profiles')
+          .upsert(newProfile, { onConflict: 'id' })
+          .select()
+          .limit(1);
+        
+        if (upsertError) throw upsertError;
+        return data && data.length > 0 ? data[0] : null;
+      })();
+
+      return await Promise.race([upsertPromise, timeoutPromise]);
+    } catch (error: any) {
+      console.error("[AppContext] Error ensuring profile record exists:", error);
+      return {
+        id: userId,
+        name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'New Developer',
+        avatar_url: authUser.user_metadata?.avatar_url || null
+      };
+    }
+  }, []);
+
+  const updatePresence = useCallback(async () => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) return;
+    try {
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      
+      let newStreak = activeUser.activity_streak || 0;
+      const lastStreakDate = activeUser.last_streak_date;
+
+      if (!lastStreakDate || lastStreakDate < today) {
+        if (lastStreakDate === new Date(now.getTime() - 86400000).toISOString().split('T')[0]) {
+          newStreak += 1;
+        } else {
+          newStreak = 1;
+        }
+      }
+
+      await supabase
+        .from('profiles')
+        .update({ 
+          last_seen: now.toISOString(),
+          last_active_at: now.toISOString(),
+          activity_streak: newStreak,
+          last_streak_date: today
+        })
+        .eq('id', activeUser.id);
+    } catch (e) {
+      // Silent fail
+    }
+  }, []);
+
+  const incrementInterest = useCallback(async (skills: string[], amount: number) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) return;
+    
+    const currentSettings = activeUser.notification_settings || {};
+    const currentInterests = currentSettings.interests || {};
+    
+    const newInterests = { ...currentInterests };
+    skills.forEach(skill => {
+      const cleanSkill = skill.trim();
+      if (cleanSkill) {
+        newInterests[cleanSkill] = (newInterests[cleanSkill] || 0) + amount;
+      }
+    });
+    
+    const newSettings = {
+      ...currentSettings,
+      interests: newInterests
+    };
+    
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ notification_settings: newSettings })
+        .eq('id', activeUser.id);
+        
+      if (!error) {
+        setCurrentUser((prev: any) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            notification_settings: newSettings
+          };
+        });
+      }
+    } catch (e) {
+      console.error("Failed to update interests:", e);
+    }
+  }, []);
+
+  const refreshProjects = useCallback(async (userOverride?: any) => {
+    if (!supabase) return;
+    const activeUser = userOverride || currentUserRef.current;
+
+    try {
+      const { data, error } = await supabase
+        .from('projects')
+        .select(`
+          id, title, problem, solution, description, stage, project_template, skills_required, thumbnail_url, created_at, status, project_url, creator_id, documentation, documentation_filename,
+          creator:profiles!projects_creator_id_fkey(id, name, avatar_url, title, display_name),
+          likes(user_id),
+          comments(id),
+          project_members(user_id, status, role, user:profiles!project_members_user_id_fkey(id, name, avatar_url, title, display_name))
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Enforce visibility at the query level: paused projects are only visible to their owner
+      const visibleProjects = data.filter(p => p.status !== 'PAUSED' || p.creator_id === activeUser?.id);
+
+      const transformed = visibleProjects.map(p => ({
+        ...p,
+        project_template: p.project_template || 'Other',
+        likes: p.likes?.length || 0,
+        commentCount: p.comments?.length || 0,
+        isLiked: p.likes?.some((l: any) => l.user_id === activeUser?.id),
+        skills: p.skills_required || [],
+        thumbnail: p.thumbnail_url,
+        timestamp: p.created_at,
+        members: p.project_members?.filter((m: any) => m.status === 'active').map((m: any) => m.user_id) || [],
+        memberProfiles: p.project_members?.filter((m: any) => m.status === 'active').map((m: any) => ({
+          ...m.user,
+          role: m.role || (m.user_id === p.creator_id ? 'Founder' : 'Contributor')
+        })) || [],
+        myMembershipStatus: p.project_members?.find((m: any) => m.user_id === activeUser?.id)?.status || 'none',
+        myRole: p.project_members?.find((m: any) => m.user_id === activeUser?.id)?.role || 'Contributor'
+      }));
+
+      setProjects(transformed);
+
+      if (activeUser?.id) {
+        try {
+          const { data: reqData, error: reqError } = await supabase
+            .from('join_requests')
+            .select(`
+              id, 
+              project_id, 
+              user_id, 
+              status, 
+              reason, 
+              skills, 
+              created_at, 
+              user:profiles(id, name, avatar_url, title, display_name)
+            `);
+          
+          if (reqError) throw reqError;
+          if (reqData) setRequests(reqData);
+        } catch (e) {
+          console.error("[AppContext] Failed to fetch join requests:", e);
+        }
+      } else {
+        setRequests([]);
+      }
+    } catch (error: any) {
+      console.error("Refresh projects error:", error.message);
+    }
+  }, []);
+
+  const refreshNotifications = useCallback(async () => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id || isRefreshing.current.notifications) return;
+    isRefreshing.current.notifications = true;
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*, actor:profiles!notifications_actor_id_fkey(name, avatar_url, display_name)')
+        .eq('user_id', activeUser.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+      setNotifications(data || []);
+      setUnreadNotificationsCount(data?.filter(n => !n.is_read).length || 0);
+    } catch (error: any) {
+      console.error("Refresh notifications error:", error.message);
+    } finally {
+      isRefreshing.current.notifications = false;
+    }
+  }, []);
+
+  const refreshChats = useCallback(async () => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id || isRefreshing.current.chats) return;
+    isRefreshing.current.chats = true;
+    try {
+      let hiddenChatIds = new Set<string>();
+      try {
+        const { data: hiddenData } = await supabase
+          .from('hidden_chats')
+          .select('chat_id')
+          .eq('user_id', activeUser.id);
+        
+        if (hiddenData) {
+          hiddenChatIds = new Set(hiddenData.map(h => h.chat_id));
+        }
+      } catch (e) {}
+
+      const { data: chatMemberships, error: memberError } = await supabase
+        .from('chat_members')
+        .select(`
+          chat_id,
+          chat:chats (
+            id,
+            type,
+            project_id,
+            project:projects (title, thumbnail_url, creator_id)
+          )
+        `)
+        .eq('user_id', activeUser.id);
+
+      if (memberError) throw memberError;
+
+      const chatIds = chatMemberships?.map(m => m.chat_id) || [];
+      if (chatIds.length === 0) {
+        setChats([]);
+        setUnreadChatsCount(0);
+        return;
+      }
+
+      const { data: lastMessages, error: msgError } = await supabase
+        .from('messages')
+        .select('*, sender:profiles!messages_sender_id_fkey(name, avatar_url, display_name)')
+        .in('chat_id', chatIds)
+        .order('created_at', { ascending: false });
+
+      if (msgError) throw msgError;
+
+      const { data: readData } = await supabase
+        .from('chat_reads')
+        .select('*')
+        .eq('user_id', activeUser.id);
+      
+      const readMap = new Map(readData?.map(r => [r.chat_id, new Date(r.last_read_at).getTime()]) || []);
+
+      const conversations = new Map();
+      
+      for (const membership of chatMemberships) {
+        const chat = membership.chat as any;
+        if (!chat || hiddenChatIds.has(chat.id)) continue;
+
+        const isGroup = chat.type === 'group';
+        const isOwner = isGroup && chat.project?.creator_id === activeUser.id;
+        let chatName = isGroup ? chat.project?.title : 'Loading...';
+        let chatAvatar = isGroup ? chat.project?.thumbnail_url : null;
+        let targetId = isGroup ? chat.project_id : null;
+
+        if (!isGroup) {
+          const { data: otherMember } = await supabase
+            .from('chat_members')
+            .select('user:profiles(*)')
+            .eq('chat_id', chat.id)
+            .neq('user_id', activeUser.id)
+            .maybeSingle();
+          
+          if (otherMember?.user) {
+            chatName = resolveName(otherMember.user);
+            chatAvatar = (otherMember.user as any).avatar_url;
+            targetId = (otherMember.user as any).id;
+          }
+        }
+
+        conversations.set(chat.id, {
+          id: chat.id,
+          targetId,
+          name: chatName,
+          avatar: chatAvatar,
+          lastMsg: 'No messages yet',
+          time: '',
+          unread: 0,
+          isGroup,
+          isOwner,
+          lastTimestamp: 0
+        });
+      }
+
+      lastMessages?.forEach(msg => {
+        const chat = conversations.get(msg.chat_id);
+        if (!chat) return;
+
+        const lastRead = readMap.get(msg.chat_id) || 0;
+        const isUnread = msg.sender_id !== activeUser.id && new Date(msg.created_at).getTime() > lastRead;
+
+        if (chat.lastTimestamp === 0) {
+          chat.lastMsg = msg.content;
+          chat.time = new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          chat.lastTimestamp = new Date(msg.created_at).getTime();
+        }
+
+        if (isUnread) {
+          chat.unread++;
+        }
+      });
+
+      const sortedChats = Array.from(conversations.values())
+        .sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+
+      setChats(sortedChats);
+      setUnreadChatsCount(sortedChats.filter(c => c.unread > 0).length);
+    } catch (error: any) {
+      console.error("Refresh chats error:", error.message);
+    } finally {
+      isRefreshing.current.chats = false;
+    }
+  }, [resolveName]);
+
+  const markAsRead = useCallback(async (chatId: string, isGroup: boolean) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) return;
+    try {
+      const now = new Date().toISOString();
+      await supabase.from('chat_reads').upsert({
+        user_id: activeUser.id,
+        chat_id: chatId,
+        last_read_at: now
+      }, { onConflict: 'user_id,chat_id' });
+
+      setChats(prev => prev.map(c => c.id === chatId ? { ...c, unread: 0 } : c));
+      setUnreadChatsCount(prev => Math.max(0, prev - 1));
+    } catch (error) {
+      console.error("markAsRead failed:", error);
+    }
+  }, []);
+
+  const deleteChat = useCallback(async (chatId: string) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) return;
+    try {
+      const { error } = await supabase.from('hidden_chats').upsert({
+        user_id: activeUser.id,
+        chat_id: chatId
+      }, { onConflict: 'user_id,chat_id' });
+
+      if (error) throw error;
+      toast.success("Chat removed from list");
+      setTimeout(() => refreshChats(), 100);
+    } catch (error: any) {
+      toast.error("Failed to remove chat");
+    }
+  }, [refreshChats]);
+
+  const leaveGroup = useCallback(async (chatId: string) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) return;
+    const chat = chats.find(c => c.id === chatId);
+    if (chat?.isOwner) {
+      toast.error("Transfer admin role before leaving the group.");
+      return;
+    }
+    try {
+      const { error } = await supabase.rpc('leave_project', {
+        p_project_id: chat.targetId,
+        p_user_id: activeUser.id
+      });
+
+      if (error) throw error;
+
+      await supabase.from('hidden_chats').upsert({
+        user_id: activeUser.id,
+        chat_id: chatId
+      }, { onConflict: 'user_id,chat_id' });
+
+      toast.success("Exited group and removed chat");
+      setTimeout(() => {
+        refreshChats();
+        refreshProjects();
+      }, 100);
+    } catch (error: any) {
+      toast.error("Failed to exit group");
+    }
+  }, [refreshChats, refreshProjects, chats]);
+
+  const dismissGroup = useCallback(async (chatId: string) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) return;
+    try {
+      const { error } = await supabase.rpc('dismiss_group_chat', {
+        p_chat_id: chatId,
+        p_admin_id: activeUser.id
+      });
+
+      if (error) throw error;
+      toast.success("Group dismissed successfully");
+      setTimeout(() => refreshChats(), 100);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to dismiss group");
+    }
+  }, [refreshChats]);
+
+  const removeMemberFromGroup = useCallback(async (chatId: string, userId: string) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) return;
+    const chat = chats.find(c => c.id === chatId);
+    try {
+      const { error } = await supabase.rpc('remove_project_member', {
+        p_project_id: chat.targetId,
+        p_target_user_id: userId,
+        p_admin_id: activeUser.id
+      });
+
+      if (error) throw error;
+      toast.success("Member removed from group");
+      setTimeout(() => {
+        refreshChats();
+        refreshProjects();
+      }, 100);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to remove member");
+    }
+  }, [refreshChats, refreshProjects, chats]);
+
+  const logout = useCallback(async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setCurrentUser(null);
+    toast.success("Logged out successfully");
+  }, []);
+
+  const toggleLike = useCallback(async (projectId: string) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) {
+      toast.error("Please sign in to like projects");
+      return;
+    }
+    if (processingLikes.current.has(projectId)) return;
+    processingLikes.current.add(projectId);
+
+    const project = projects.find(p => p.id === projectId);
+    const isLiked = project?.isLiked;
+
+    try {
+      if (isLiked) {
+        const { error } = await supabase.from('likes').delete().match({ project_id: projectId, user_id: activeUser.id });
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('likes').insert({ project_id: projectId, user_id: activeUser.id });
+        if (error && error.code !== '23505') throw error;
+        if (project?.skills) {
+          incrementInterest(project.skills, 3);
+        }
+      }
+      await refreshProjects();
+    } catch (error) {
+      toast.error("Failed to update like");
+    } finally {
+      processingLikes.current.delete(projectId);
+    }
+  }, [projects, refreshProjects, incrementInterest]);
+
+  const addComment = useCallback(async (projectId: string, text: string) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id) {
+      toast.error("Please sign in to comment");
+      return;
+    }
+    const project = projects.find(p => p.id === projectId);
+    try {
+      const { error } = await supabase.from('comments').insert({
+        project_id: projectId,
+        user_id: activeUser.id,
+        content: text
+      });
+      if (error) throw error;
+      await refreshProjects();
+      toast.success("Comment added!");
+      if (project?.skills) {
+        incrementInterest(project.skills, 3);
+      }
+    } catch (error) {
+      toast.error("Failed to add comment");
+    }
+  }, [projects, refreshProjects, incrementInterest]);
+
+  // Robust Auth Initialization & State Monitoring (Runs once on mount)
+  useEffect(() => {
+    if (!supabase) {
+      console.log("[AppContext] Supabase client not initialized");
+      setAuthLoading(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    const handleUserSession = async (session: any) => {
+      console.log("[AppContext] handleUserSession called with session:", session);
+      if (!session?.user) {
+        if (isMounted) {
+          console.log("[AppContext] No user session found, setting authLoading to false");
+          setCurrentUser(null);
+          setAuthLoading(false);
+        }
+        return;
+      }
+
+      try {
+        console.log("[AppContext] User session found, ensuring profile for:", session.user.id);
+        const profile = await ensureProfile(session.user.id, session.user);
+        const user = profile ? { ...session.user, ...profile } : session.user;
+        
+        if (isMounted) {
+          console.log("[AppContext] Profile ensured, setting current user");
+          setCurrentUser(user);
+          setAuthLoading(false);
+        }
+      } catch (err) {
+        console.error("[AppContext] Error handling user session:", err);
+        if (isMounted) setAuthLoading(false);
+      }
+    };
+
+    console.log("[AppContext] Getting initial session...");
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      console.log("[AppContext] getSession resolved. Session:", session, "Error:", error);
+      if (error) {
+        console.error("[AppContext] Get session error:", error);
+        supabase.auth.signOut();
+        if (isMounted) setAuthLoading(false);
+        return;
+      }
+      handleUserSession(session);
+    }).catch((err) => {
+      console.error("[AppContext] getSession rejected:", err);
+      if (isMounted) setAuthLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log("[AppContext] Auth state change event:", event);
+      if (event === 'SIGNED_OUT') {
+        if (isMounted) {
+          setCurrentUser(null);
+          setAuthLoading(false);
+        }
+      } else if (session?.user && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED')) {
+        await handleUserSession(session);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [ensureProfile]);
+
+  // Restrict full data reloads to actual user ID changes to prevent infinite loops
+  useEffect(() => {
+    if (currentUser) {
+      if (lastLoadedUserId.current === currentUser.id) {
+        return;
+      }
+      lastLoadedUserId.current = currentUser.id;
+      console.log("[AppContext] currentUser ID changed, loading user data in background");
+      Promise.allSettled([
+        refreshProjects(currentUser),
+        refreshNotifications(),
+        refreshChats()
+      ]).then(() => {
+        console.log("[AppContext] Background user data loaded successfully");
+      });
+    } else {
+      if (lastLoadedUserId.current !== null) {
+        lastLoadedUserId.current = null;
+        console.log("[AppContext] currentUser is null, clearing user data");
+        refreshProjects(null);
+        setNotifications([]);
+        setChats([]);
+        setUnreadChatsCount(0);
+        setUnreadNotificationsCount(0);
+      }
+    }
+  }, [currentUser, refreshProjects, refreshNotifications, refreshChats]);
+
+  useEffect(() => {
+    if (currentUser?.id) {
+      updatePresence();
+      const interval = setInterval(updatePresence, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [currentUser?.id, updatePresence]);
+
+  // Auto-Logout Logic
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const handleActivity = () => { lastActivity.current = Date.now(); };
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('click', handleActivity);
+    window.addEventListener('scroll', handleActivity);
+
+    const checkInterval = setInterval(() => {
+      const preference = currentUser.notification_settings?.auto_logout || 'never';
+      if (preference === 'never') return;
+      const timeoutMs = parseInt(preference) * 60 * 1000;
+      if (Date.now() - lastActivity.current > timeoutMs) {
+        toast.info("Logged out due to inactivity");
+        logout();
+      }
+    }, 10000);
+
+    return () => {
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('click', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+      clearInterval(checkInterval);
+    };
+  }, [currentUser?.id, logout]);
+
+  useEffect(() => {
+    if (currentUser?.id) {
+      const channel = supabase
+        .channel('global-updates')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
+          const msg = payload.new as any;
+          if (processedEventIds.current.has(msg.id)) return;
+          processedEventIds.current.add(msg.id);
+          
+          const settings = currentUser.notification_settings || {};
+          if (msg.sender_id !== currentUser.id) {
+            if (settings.messages !== false) notificationService.play('message', settings.sound !== false);
+            toast.info(`New message from ${msg.sender_name || 'a developer'}`);
+          }
+          
+          supabase.from('hidden_chats').delete().match({ user_id: currentUser.id, chat_id: msg.chat_id }).then(() => {
+            if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+            refreshTimeout.current = setTimeout(() => refreshChats(), 200);
+          });
+        })
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, (payload) => {
+          const notif = payload.new as any;
+          if (processedEventIds.current.has(notif.id)) return;
+          processedEventIds.current.add(notif.id);
+          
+          const settings = currentUser.notification_settings || {};
+          const isProjectActivity = ['request', 'pause', 'resume', 'request_accepted', 'request_rejected'].includes(notif.type);
+          
+          if (isProjectActivity) {
+            if (settings.projects !== false) notificationService.play('project', settings.sound !== false);
+          } else {
+            if (settings.push !== false) notificationService.play('system', settings.sound !== false);
+          }
+          
+          if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+          refreshTimeout.current = setTimeout(() => refreshNotifications(), 200);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_reads' }, () => {
+          if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+          refreshTimeout.current = setTimeout(() => refreshChats(), 200);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'join_requests' }, () => {
+          if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+          refreshTimeout.current = setTimeout(() => refreshProjects(), 200);
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'project_members' }, () => {
+          if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+          refreshTimeout.current = setTimeout(() => {
+            refreshProjects();
+            refreshChats();
+          }, 200);
+        })
+        .subscribe();
+
+      return () => {
+        if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+        supabase.removeChannel(channel);
+      };
+    }
+  }, [currentUser?.id, refreshNotifications, refreshChats, refreshProjects]);
+
+  return (
+    <AppContext.Provider value={{ 
+      currentUser, setCurrentUser, authLoading,
+      hasSeenOnboarding, completeOnboarding,
+      projects, setProjects, 
+      requests, setRequests,
+      chats, setChats,
+      notifications, setNotifications,
+      unreadChatsCount,
+      unreadNotificationsCount,
+      logout, toggleLike, addComment,
+      refreshProjects, refreshNotifications, refreshChats,
+      markAsRead, deleteChat, leaveGroup, dismissGroup, removeMemberFromGroup,
+      updatePresence, resolveName, incrementInterest
+    }}>
+      {children}
+    </AppContext.Provider>
+  );
+};
+
+export const useApp = () => {
+  const context = useContext(AppContext);
+  if (!context) throw new Error('useApp must be used within AppProvider');
+  return context;
+};
