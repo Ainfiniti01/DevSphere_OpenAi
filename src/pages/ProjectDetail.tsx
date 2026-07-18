@@ -267,7 +267,7 @@ const ProjectDetail = () => {
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    <span className="px-3 py-1 bg-primary/15 text-primary text-xs font-black rounded-full uppercase tracking-wider">Template: {getProjectTemplate(project.project_template)}</span>
+                    <span className="px-3 py-1 bg-primary/15 text-primary text-xs font-black rounded-full uppercase tracking-wider">{getProjectTemplate(project.project_template)}</span>
                     <span className="px-3 py-1 bg-primary/15 text-primary text-xs font-black rounded-full uppercase tracking-wider">{project.stage}</span>
                     {isOwner && <span className="px-3 py-1 bg-emerald-500/15 text-emerald-500 text-xs font-black rounded-full uppercase tracking-wider">Your Project</span>}
                   </div>
