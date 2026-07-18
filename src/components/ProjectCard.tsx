@@ -13,7 +13,7 @@ import { useApp } from '@/context/AppContext';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
-import { getProjectTemplate } from '@/lib/projectTemplates';
+import { getProjectTemplate } from '@/lib/projectTemplates'; 
 
 const ProjectCard = ({ project }: { project: any }) => {
   const navigate = useNavigate();
