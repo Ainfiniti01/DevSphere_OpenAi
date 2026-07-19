@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { ChevronLeft, MessageSquare, Users, Share2, Rocket, Loader2, Heart, Send, User, Pause, Play, ExternalLink, ChevronDown, ChevronUp, BadgeCheck, Sparkles, Edit, FileText } from 'lucide-react';
+import { ChevronLeft, MessageSquare, Users, Share2, Rocket, Loader2, Heart, Send, User, Pause, Play, ExternalLink, ChevronDown, ChevronUp, BadgeCheck, Sparkles, Edit, FileText, Pin } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { getProjectTemplate } from '@/lib/projectTemplates';
@@ -44,7 +44,7 @@ const ProjectDetail = () => {
     try {
       const { data, error } = await supabase
         .from('comments')
-        .select('id, content, created_at, user_id, user:profiles(id, name, avatar_url, display_name)')
+        .select('id, content, created_at, user_id, is_pinned, user:profiles(id, name, avatar_url, display_name)')
         .eq('project_id', id)
         .order('created_at', { ascending: false }); // Newest at the top
       
@@ -55,6 +55,19 @@ const ProjectDetail = () => {
     } finally {
       setLoadingComments(false);
     }
+  };
+
+  const fetchComment = async (commentId: string) => {
+    if (!supabase) return;
+    const { data, error } = await supabase
+      .from('comments')
+      .select('id, content, created_at, user_id, is_pinned, user:profiles(id, name, avatar_url, display_name)')
+      .eq('id', commentId)
+      .maybeSingle();
+    if (error || !data) return;
+    setComments(previous => previous.some(comment => comment.id === data.id)
+      ? previous.map(comment => comment.id === data.id ? data : comment)
+      : [data, ...previous]);
   };
 
   // 1. Fetch comments once on mount or when ID changes
@@ -80,8 +93,19 @@ const ProjectDetail = () => {
         schema: 'public',
         table: 'comments',
         filter: `project_id=eq.${id}`
-      }, () => {
-        fetchComments();
+      }, (payload) => {
+        const changedComment = payload.new as any;
+        if (payload.eventType === 'INSERT') {
+          fetchComment(changedComment.id);
+          return;
+        }
+        if (payload.eventType === 'DELETE') {
+          setComments(previous => previous.filter(comment => comment.id !== (payload.old as any).id));
+          return;
+        }
+        setComments(previous => previous.map(comment =>
+          comment.id === changedComment.id ? { ...comment, ...changedComment } : comment
+        ));
       })
       .subscribe();
 
@@ -131,27 +155,50 @@ const ProjectDetail = () => {
 
   const isOwner = currentUser?.id === project.creator_id;
   const isMember = project.myMembershipStatus === 'active';
+  const canManagePins = project.myRole === 'Founder' || currentUser?.is_admin;
+  const pinnedComment = comments.find(comment => comment.is_pinned);
+  const regularComments = comments.filter(comment => !comment.is_pinned);
 
   const handleAddComment = async () => {
     if (!commentText.trim() || !currentUser) return;
     setIsSubmitting(true);
     try {
-      const { error } = await supabase.from('comments').insert({
+      const { data, error } = await supabase.from('comments').insert({
         project_id: project.id,
         user_id: currentUser.id,
         content: commentText
-      });
+      }).select('id').single();
 
       if (error) throw error;
 
       toast.success("Comment added!");
       setCommentText('');
-      await fetchComments();
-      await refreshProjects();
+      if (data?.id) await fetchComment(data.id);
     } catch (err: any) {
       toast.error(err.message);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handlePinDiscussion = async (comment: any, shouldPin: boolean) => {
+    if (!supabase || !canManagePins) return;
+    const previousComments = comments;
+    setComments(current => current.map(item => ({
+      ...item,
+      is_pinned: shouldPin ? item.id === comment.id : item.id === comment.id ? false : item.is_pinned
+    })));
+
+    try {
+      const { error } = await supabase.rpc(
+        shouldPin ? 'pin_project_discussion' : 'unpin_project_discussion',
+        { p_comment_id: comment.id }
+      );
+      if (error) throw error;
+      toast.success(shouldPin ? 'Discussion pinned.' : 'Pinned discussion removed.');
+    } catch (error: any) {
+      setComments(previousComments);
+      toast.error(error.message || 'Unable to update pinned discussion.');
     }
   };
 
@@ -507,6 +554,30 @@ const ProjectDetail = () => {
                 Discussion
               </h3>
               <div className="space-y-6">
+                {pinnedComment && (
+                  <div className="p-4 bg-primary/5 border border-primary/20 rounded-2xl">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-primary">
+                        <Pin size={14} fill="currentColor" /> Pinned Discussion
+                      </span>
+                      {canManagePins && (
+                        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs font-bold text-primary" onClick={() => handlePinDiscussion(pinnedComment, false)}>
+                          Unpin
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex gap-3">
+                      <Avatar className="h-8 w-8 shrink-0"><AvatarImage src={pinnedComment.user?.avatar_url} /><AvatarFallback>{pinnedComment.user?.name?.[0]}</AvatarFallback></Avatar>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex justify-between items-center gap-2 mb-1">
+                          <h5 className="text-xs font-bold truncate">{pinnedComment.user?.name}</h5>
+                          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(pinnedComment.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <p className="text-xs leading-relaxed whitespace-pre-wrap">{pinnedComment.content}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="flex gap-3">
                   <Input 
                     placeholder="Add a comment..." 
@@ -523,24 +594,31 @@ const ProjectDetail = () => {
                 <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
                   {loadingComments ? (
                     <div className="flex justify-center py-4"><Loader2 className="animate-spin text-primary" /></div>
-                  ) : comments.length > 0 ? (
-                    comments.map((c) => (
+                  ) : regularComments.length > 0 ? (
+                    regularComments.map((c) => (
                       <div key={c.id} className="flex gap-3">
                         <Avatar className="h-8 w-8 shrink-0">
                           <AvatarImage src={c.user?.avatar_url} />
                           <AvatarFallback>{c.user?.name?.[0]}</AvatarFallback>
                         </Avatar>
                         <div className="flex-1 bg-accent/20 p-3 rounded-2xl">
-                          <div className="flex justify-between items-center mb-1">
+                          <div className="flex justify-between items-center gap-2 mb-1">
                             <h5 className="text-xs font-bold">{c.user?.name}</h5>
-                            <span className="text-[9px] text-muted-foreground">{new Date(c.created_at).toLocaleDateString()}</span>
+                            <div className="flex items-center gap-1">
+                              {canManagePins && (
+                                <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px] font-bold text-primary" onClick={() => handlePinDiscussion(c, true)}>
+                                  <Pin size={11} /> Pin
+                                </Button>
+                              )}
+                              <span className="text-[9px] text-muted-foreground">{new Date(c.created_at).toLocaleDateString()}</span>
+                            </div>
                           </div>
                           <p className="text-xs leading-relaxed">{c.content}</p>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <p className="text-center text-xs text-muted-foreground py-4">No comments yet. Start the conversation!</p>
+                    <p className="text-center text-xs text-muted-foreground py-4">{pinnedComment ? 'No other discussions yet.' : 'No comments yet. Start the conversation!'}</p>
                   )}
                 </div>
               </div>

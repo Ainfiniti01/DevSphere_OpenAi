@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Send, Paperclip, User, Users, MessageSquare, X, Check, CheckCheck, Loader2 } from 'lucide-react';
+import { ChevronLeft, Send, Paperclip, User, Users, MessageSquare, X, Check, CheckCheck, Loader2, Pin } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useApp } from '@/context/AppContext';
 import { toast } from 'sonner';
@@ -25,6 +25,8 @@ const ChatScreen = () => {
   const [msg, setMsg] = useState('');
   const [loading, setLoading] = useState(true);
   const [previewAvatar, setPreviewAvatar] = useState<string | null>(null);
+  const [pinnedMessage, setPinnedMessage] = useState<any>(null);
+  const [canManagePins, setCanManagePins] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initRef = useRef(false);
 
@@ -35,6 +37,19 @@ const ChatScreen = () => {
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
+  };
+
+  const fetchPinnedMessage = async (messageId?: string | null) => {
+    if (!supabase || !messageId) {
+      setPinnedMessage(null);
+      return;
+    }
+    const { data } = await supabase
+      .from('messages')
+      .select('*, sender:profiles!messages_sender_id_fkey(id, name, avatar_url, display_name)')
+      .eq('id', messageId)
+      .maybeSingle();
+    setPinnedMessage(data || null);
   };
 
   useEffect(() => {
@@ -52,6 +67,7 @@ const ChatScreen = () => {
       setLoading(true);
       try {
         let resolvedChatId = null;
+        let groupProject: any = null;
 
         if (isGroup) {
           const { data: project } = await supabase
@@ -61,6 +77,15 @@ const ChatScreen = () => {
             .maybeSingle();
           
           setChatPartner(project);
+          groupProject = project;
+
+          const { data: membership } = await supabase
+            .from('project_members')
+            .select('role, status')
+            .eq('project_id', id)
+            .eq('user_id', currentUser.id)
+            .maybeSingle();
+          setCanManagePins(Boolean(currentUser.is_admin) || (membership?.status === 'active' && membership?.role === 'Founder'));
 
           const { data: chat } = await supabase
             .from('chats')
@@ -100,6 +125,11 @@ const ChatScreen = () => {
             .order('created_at', { ascending: true });
           
           setMessages(msgs || []);
+          if (isGroup) {
+            const existingPinned = msgs?.find(message => message.id === groupProject?.pinned_chat_message_id);
+            if (existingPinned) setPinnedMessage(existingPinned);
+            else await fetchPinnedMessage(groupProject?.pinned_chat_message_id);
+          }
 
           const { data: reads } = await supabase
             .from('chat_reads')
@@ -134,12 +164,21 @@ const ChatScreen = () => {
     const channel = supabase
       .channel(`chat_room_${chatId}`)
       .on('postgres_changes', { 
-        event: 'INSERT', 
+        event: '*', 
         schema: 'public', 
         table: 'messages',
         filter: `chat_id=eq.${chatId}`
       }, async (payload) => {
         const newMsg = payload.new;
+        if (payload.eventType === 'DELETE') {
+          setMessages(prev => prev.filter(message => message.id !== (payload.old as any).id));
+          return;
+        }
+        if (payload.eventType === 'UPDATE') {
+          setMessages(prev => prev.map(message => message.id === newMsg.id ? { ...message, ...newMsg } : message));
+          setPinnedMessage(prev => prev?.id === newMsg.id ? { ...prev, ...newMsg } : prev);
+          return;
+        }
         
         let senderInfo = null;
         if (newMsg.sender_id === currentUser.id) {
@@ -189,6 +228,19 @@ const ChatScreen = () => {
     };
   }, [chatId, currentUser?.id, isGroup, markAsRead]);
 
+  useEffect(() => {
+    if (!id || !isGroup || !supabase) return;
+    const channel = supabase
+      .channel(`project_chat_pin_${id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'projects', filter: `id=eq.${id}` }, (payload) => {
+        const pinnedId = (payload.new as any).pinned_chat_message_id;
+        setChatPartner(previous => ({ ...previous, ...payload.new }));
+        fetchPinnedMessage(pinnedId);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [id, isGroup]);
+
   const handleSend = async () => {
     if (!msg.trim() || !supabase || !currentUser || !chatId) return;
     
@@ -232,6 +284,23 @@ const ChatScreen = () => {
     }
   };
 
+  const handlePinnedMessage = async (message: any, shouldPin: boolean) => {
+    if (!supabase || !isGroup || !id || !canManagePins) return;
+    const previousPinned = pinnedMessage;
+    setPinnedMessage(shouldPin ? message : null);
+    try {
+      const { error } = await supabase.rpc(
+        shouldPin ? 'pin_project_chat_message' : 'unpin_project_chat_message',
+        shouldPin ? { p_message_id: message.id } : { p_project_id: id, p_message_id: message.id }
+      );
+      if (error) throw error;
+      toast.success(shouldPin ? 'Message pinned.' : 'Pinned message removed.');
+    } catch (error: any) {
+      setPinnedMessage(previousPinned);
+      toast.error(error.message || 'Unable to update pinned message.');
+    }
+  };
+
   if (loading) {
     return (
       <AppLayout title="Chat">
@@ -271,6 +340,21 @@ const ChatScreen = () => {
             </p>
           </div>
         </header>
+
+        {isGroup && pinnedMessage && (
+          <div className="shrink-0 mx-4 mt-3 p-3 bg-primary/5 border border-primary/20 rounded-2xl flex items-start gap-3">
+            <Pin size={16} className="text-primary mt-0.5 shrink-0" fill="currentColor" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-black uppercase tracking-widest text-primary">Pinned Message</span>
+                {canManagePins && <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px] font-bold text-primary" onClick={() => handlePinnedMessage(pinnedMessage, false)}>Unpin</Button>}
+              </div>
+              <p className="text-xs font-bold mt-1">{resolveName(pinnedMessage.sender)}</p>
+              <p className="text-xs text-foreground/80 line-clamp-2 mt-1">{pinnedMessage.content}</p>
+              <p className="text-[9px] text-muted-foreground mt-1">{new Date(pinnedMessage.created_at).toLocaleString()}</p>
+            </div>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-accent/5">
           {messages.map((m) => {
@@ -321,6 +405,11 @@ const ChatScreen = () => {
                       )}
                     </div>
                   </div>
+                  {isGroup && canManagePins && (
+                    <button onClick={() => handlePinnedMessage(m, true)} className="mt-1 px-2 py-1 text-[10px] font-bold text-primary hover:bg-primary/10 rounded-lg transition-colors">
+                      <Pin size={11} className="inline mr-1" /> Pin
+                    </button>
+                  )}
                 </div>
               </div>
             );
