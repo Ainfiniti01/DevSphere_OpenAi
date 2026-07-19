@@ -19,6 +19,8 @@ interface AppContextType {
   setChats: React.Dispatch<React.SetStateAction<any[]>>;
   notifications: any[];
   setNotifications: React.Dispatch<React.SetStateAction<any[]>>;
+  savedProjects: Record<string, string>;
+  toggleSavedProject: (projectId: string) => Promise<void>;
   unreadChatsCount: number;
   unreadNotificationsCount: number;
   logout: () => void;
@@ -53,6 +55,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const [requests, setRequests] = useState<any[]>([]);
   const [chats, setChats] = useState<any[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
+  const [savedProjects, setSavedProjects] = useState<Record<string, string>>({});
   const [unreadChatsCount, setUnreadChatsCount] = useState(0);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   
@@ -61,6 +64,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   const refreshTimeout = useRef<any>(null);
   const lastActivity = useRef<number>(Date.now());
   const processedEventIds = useRef<Set<string>>(new Set());
+  const savingProjectIds = useRef<Set<string>>(new Set());
   const lastLoadedUserId = useRef<string | null>(null);
 
   // Keep a stable ref to currentUser to prevent callback recreation loops
@@ -68,6 +72,70 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     currentUserRef.current = currentUser;
   }, [currentUser]);
+
+  const toggleSavedProject = useCallback(async (projectId: string) => {
+    const activeUser = currentUserRef.current;
+    if (!supabase || !activeUser?.id || savingProjectIds.current.has(projectId)) return;
+
+    const savedAt = savedProjects[projectId];
+    savingProjectIds.current.add(projectId);
+    setSavedProjects(previous => {
+      const next = { ...previous };
+      if (savedAt) delete next[projectId];
+      else next[projectId] = new Date().toISOString();
+      return next;
+    });
+
+    try {
+      if (savedAt) {
+        const { error } = await supabase.from('saved_projects')
+          .delete()
+          .match({ user_id: activeUser.id, project_id: projectId });
+        if (error) throw error;
+        toast.success('Removed from saved projects.');
+      } else {
+        const { data, error } = await supabase.from('saved_projects')
+          .insert({ user_id: activeUser.id, project_id: projectId })
+          .select('created_at')
+          .single();
+        if (error) throw error;
+        if (data?.created_at) {
+          setSavedProjects(previous => ({ ...previous, [projectId]: data.created_at }));
+        }
+        toast.success('Project saved.');
+      }
+    } catch (error: any) {
+      setSavedProjects(previous => {
+        const next = { ...previous };
+        if (savedAt) next[projectId] = savedAt;
+        else delete next[projectId];
+        return next;
+      });
+      toast.error(error.message || 'Unable to update saved projects.');
+    } finally {
+      savingProjectIds.current.delete(projectId);
+    }
+  }, [savedProjects]);
+
+  useEffect(() => {
+    const loadSavedProjects = async () => {
+      if (!supabase || !currentUser?.id) {
+        setSavedProjects({});
+        return;
+      }
+
+      const { data, error } = await supabase.from('saved_projects')
+        .select('project_id, created_at')
+        .eq('user_id', currentUser.id);
+      if (error) {
+        console.error('Failed to load saved projects:', error.message);
+        return;
+      }
+      setSavedProjects(Object.fromEntries((data || []).map(item => [item.project_id, item.created_at])));
+    };
+
+    loadSavedProjects();
+  }, [currentUser?.id]);
 
   const completeOnboarding = useCallback(() => {
     setHasSeenOnboarding(true);
@@ -794,6 +862,7 @@ export const AppProvider = ({ children }: { children: React.ReactNode }) => {
       requests, setRequests,
       chats, setChats,
       notifications, setNotifications,
+      savedProjects, toggleSavedProject,
       unreadChatsCount,
       unreadNotificationsCount,
       logout, toggleLike, addComment,

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { Heart, Share2, MessageCircle, Send, User, Loader2, BadgeCheck } from 'lucide-react';
+import { Heart, Share2, MessageCircle, Send, User, Loader2, BadgeCheck, Bookmark } from 'lucide-react';
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer";
@@ -17,7 +17,7 @@ import { getProjectTemplate } from '@/lib/projectTemplates';
 
 const ProjectCard = ({ project }: { project: any }) => {
   const navigate = useNavigate();
-  const { toggleLike, addComment, currentUser } = useApp();
+  const { toggleLike, addComment, currentUser, savedProjects, toggleSavedProject } = useApp();
   const [commentText, setCommentText] = useState('');
   const [comments, setComments] = useState<any[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
@@ -78,6 +78,7 @@ const ProjectCard = ({ project }: { project: any }) => {
   };
 
   const hasMedia = project.thumbnail && project.thumbnail !== '';
+  const isSaved = Boolean(savedProjects[project.id]);
 
   return (
     <Card className="overflow-hidden border-border bg-card shadow-sm hover:shadow-md transition-shadow mb-4">
@@ -222,9 +223,21 @@ const ProjectCard = ({ project }: { project: any }) => {
             </DrawerContent>
           </Drawer>
         </div>
-        <button onClick={handleShare} className="text-muted-foreground hover:text-foreground transition-colors p-2">
-          <Share2 size={20} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => toggleSavedProject(project.id)}
+            aria-label={isSaved ? 'Remove saved project' : 'Save project'}
+            className={cn(
+              'p-2 rounded-xl transition-all duration-200 hover:scale-110 active:scale-95',
+              isSaved ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-primary hover:bg-primary/10'
+            )}
+          >
+            <Bookmark size={20} fill={isSaved ? 'currentColor' : 'none'} />
+          </button>
+          <button onClick={handleShare} className="text-muted-foreground hover:text-foreground transition-colors p-2">
+            <Share2 size={20} />
+          </button>
+        </div>
       </CardFooter>
     </Card>
   );

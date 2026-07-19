@@ -32,6 +32,7 @@ import Admin from "./pages/Admin";
 import ResetPassword from "./pages/ResetPassword";
 import Referrals from "./pages/Referrals";
 import NotFound from "./pages/NotFound";
+import SavedProjects from "./pages/SavedProjects";
 
 const queryClient = new QueryClient();
 
@@ -67,6 +68,7 @@ const AppContent = () => {
       <Route path="/manage-team/:id" element={<ProtectedRoute><ManageTeam /></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
       <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+      <Route path="/saved-projects" element={<ProtectedRoute><SavedProjects /></ProtectedRoute>} />
       <Route path="/referrals" element={<ProtectedRoute><Referrals /></ProtectedRoute>} />
 
       {/* Publicly Accessible Routes */}

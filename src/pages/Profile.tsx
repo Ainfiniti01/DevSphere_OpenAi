@@ -5,7 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import AppLayout from '@/components/layout/AppLayout';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Settings, Share2, MapPin, Link as LinkIcon, Rocket, User, LayoutGrid, Loader2, ChevronDown, ChevronUp, Github, Linkedin, Twitter, BadgeCheck } from 'lucide-react';
+import { Settings, Share2, MapPin, Link as LinkIcon, Rocket, User, LayoutGrid, Loader2, ChevronDown, ChevronUp, Github, Linkedin, Twitter, BadgeCheck, Bookmark } from 'lucide-react';
 import SkillBadge from '@/components/SkillBadge';
 import { useApp } from '@/context/AppContext';
 import ProjectCard from '@/components/ProjectCard';
@@ -127,9 +127,13 @@ const Profile = () => {
                     <Settings size={20} />
                     <span className="hidden sm:inline">Settings</span>
                   </Button>
-                  <Button variant="default" size="lg" className="rounded-2xl font-bold gap-2 shadow-lg shadow-primary/20" onClick={() => navigate('/edit-profile')}>
-                    Edit Profile
+                  <Button variant="outline" size="lg" className="rounded-2xl border-border font-bold gap-2" onClick={() => navigate('/saved-projects')}>
+                    <Bookmark size={20} />
+                    <span className="hidden sm:inline">Saved Projects</span>
                   </Button>
+                  {/* <Button variant="default" size="lg" className="rounded-2xl font-bold gap-2 shadow-lg shadow-primary/20" onClick={() => navigate('/edit-profile')}>
+                    Edit Profile
+                  </Button> */}
                 </>
               ) : (
                 <Button size="lg" className="rounded-2xl font-black text-lg px-10 shadow-xl shadow-primary/20" onClick={() => navigate(`/chat/${profile.id}`)}>

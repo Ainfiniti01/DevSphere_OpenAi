@@ -97,7 +97,19 @@ FOR EACH ROW EXECUTE FUNCTION public.protect_project_founder_role();
 
 -- Role changes use the existing project_members subscriptions.
 DO $$
+DECLARE
+  realtime_covers_all_tables boolean;
 BEGIN
+  SELECT puballtables
+  INTO realtime_covers_all_tables
+  FROM pg_publication
+  WHERE pubname = 'supabase_realtime';
+
+  -- A FOR ALL TABLES publication already includes project_members.
+  IF realtime_covers_all_tables IS DISTINCT FROM false THEN
+    RETURN;
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1
     FROM pg_publication_rel pr
