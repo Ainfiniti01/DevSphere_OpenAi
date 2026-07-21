@@ -1,6 +1,6 @@
 # 🚀 DevSphere -- Build Together. Ship Together.
 
-**An AI-Powered Developer Collaboration Platform built with Alibaba Cloud Qwen-Plus.**
+**An AI-powered developer collaboration platform with a context-aware AI Project Manager powered by Alibaba Cloud Qwen-Plus.**
 
 > *"DevSphere doesn't simply showcase ideas, it helps teams build them together."*
 
@@ -8,15 +8,85 @@
 
 ![DevSphere Logo](assets/images/icon.jpeg)
 
-## 🛡️ Badges
+##  🚀 OpenAI Build Week Scope
 
-### Global AI Hackathon_AI Application & Alibaba Cloud_Qwen
+DevSphere is an existing developer collaboration platform.
 
-| Global AI Hackathon_AI Application | Alibaba Cloud_Qwen |
-| :---: | :---: |
-| ![Track](https://img.shields.io/badge/Global_AI_Hackathon-AI_Application-blue) | ![Alibaba Cloud](https://img.shields.io/badge/Alibaba%20Cloud-Qwen-orange) |
+During OpenAI Build Week, the focus was on extending the platform using GPT-5.6 and Codex rather than building a new application from scratch.
 
----
+The new work includes Project Templates, Team Roles, Saved Projects, and Pinned Chat Messages, alongside architecture improvements, bug fixes, and UI refinements.
+
+## 🚀 OpenAI Build Week Contributions
+
+Although DevSphere existed before this event, the following functionality was designed and implemented during the OpenAI Build Week using GPT-5.6 and Codex:
+
+- 📁 Project Templates for improved project organization and filtering
+- 👑 Explicit Team Roles (Founder & Contributor)
+- ⭐ Saved Projects
+- 📌 Pinned Chat Messages for project conversations
+- 🎨 UI polish and workflow improvements
+- 🐞 Bug fixes and performance improvements
+
+These additions were integrated into the existing architecture, tested locally, and deployed during OpenAI Build Week.
+
+## AI-assisted Development
+
+Throughout OpenAI Build Week, GPT-5.6 and Codex were used as engineering assistants for:
+
+- feature planning
+- implementation strategy
+- React component refactoring
+- SQL migration generation
+- Supabase debugging
+- architecture reviews
+- UI refinement
+- bug fixing
+- code explanations
+- implementation verification
+
+All generated code was reviewed, adapted, tested, and integrated manually before deployment.
+
+Codex accelerated development by:
+
+- generating implementation plans
+
+- refactoring React components
+
+- writing and improving SQL migrations
+
+- helping debug frontend and backend issues
+
+- suggesting architecture improvements
+
+- speeding up feature implementation while preserving developer control
+
+
+All final engineering decisions, testing, integration, and verification were completed by the project author.
+
+
+## 🛠 Development Workflow
+
+The project was developed iteratively.
+
+Typical workflow:
+
+
+1. Define the feature.
+
+2. Use GPT-5.6/Codex to explore implementation approaches.
+
+3. Review and adapt generated code.
+
+4. Integrate with the existing architecture.
+
+5. Test locally.
+
+6. Fix issues.
+
+7. Deploy and verify.
+
+
+
 
 ## 🌍 The Problem
 
@@ -27,11 +97,7 @@ DevSphere solves these challenges by unifying project discovery, team formation,
 > *"DevSphere enables developers to discover projects, build teams, collaborate in real time, and receive context-aware AI guidance—all from a single platform."*
 ---
 
-## 🌍 Global AI Hackathon — Track 2: AI Application
 
-DevSphere is an intelligent developer collaboration platform that combines real-time team formation, project discovery, and contextual AI assistance to help software teams build better products together. Instead of working alone or abandoning great ideas, developers can find teammates, manage projects, communicate, and receive AI-powered project guidance—all within one platform.
-
----
 
 ## 🧠 Context-Aware AI Project Manager
 
@@ -128,11 +194,18 @@ Live Demo:
 https://dev-sphere-kappa.vercel.app/
 
 Demo Video:
-https://www.youtube.com/watch?v=dQw4w9WgXcQ
+https://youtube.com/shorts/MDLwNpZrr4E
 
 ---
 
 ## ✨ Core Features
+
+### ✨ Recently Added
+
+- 📁 Project Templates
+- 👑 Founder & Contributor Roles
+- ⭐ Saved Projects
+- 📌 Pinned Chat Messages
 
 - 🤝 **Project Discovery:** Browse community projects, discover startup ideas, and search by skills, technologies, and stages.
 - 👥 **Team Formation:** Request to join projects, accept or reject applicants, and manage project members and roles.
@@ -349,18 +422,7 @@ To ensure maximum security and performance, all communication with Alibaba Cloud
 
 ---
 
-## 🚀 What Was Built During the Hackathon
 
-During the Global AI Hackathon, During the Global AI Hackathon, DevSphere gained:
-
-* **Context-Aware AI Project Manager
-* **Alibaba Cloud Qwen Integration
-* **Role-Aware Reasoning Engine
-* **Real-Time Team Workflows
-* **Smart notification Architecture
-* **Referral & Rewards Foundation
-
----
 
 ## 🚀 Getting Started
 
@@ -444,4 +506,4 @@ MIT License
 
 Built with ❤️ using Alibaba Cloud Qwen-Plus
 
-Created for the Global AI Hackathon 2026
+Extended during OpenAI Build Week 2026.
